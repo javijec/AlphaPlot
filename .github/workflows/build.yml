@@ -1,0 +1,86 @@
+name: Test Build
+
+on:
+  push:
+    branches: [ main, master, release-* ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: # Permite activar la compilación manualmente con un botón
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v3
+      with:
+        version: '6.8.3'
+        modules: 'qtdatavis3d qt5compat qtshadertools'
+        arch: ${{ runner.os == 'Windows' && 'win64_msvc2022_64' || '' }}
+
+    # --- LINUX ---
+    - name: Dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgsl-dev libglu1-mesa-dev freeglut3-dev mesa-common-dev
+    - name: Build (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        qmake PRESET=linux_all_dynamic INCLUDEPATH+=/usr/include QMAKE_LIBDIR+=/usr/lib/x86_64-linux-gnu
+        make -j$(nproc)
+    # --- MACOS ---
+    - name: Dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: brew install gsl
+
+    - name: Build (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        qmake PRESET=osx_dist INCLUDEPATH+=/opt/homebrew/include QMAKE_LIBDIR+=/opt/homebrew/lib
+        make -j$(sysctl -n hw.ncpu)
+    # --- WINDOWS ---
+    - name: Dependencies (Windows)
+      if: runner.os == 'Windows'
+      shell: cmd
+      run: |
+        vcpkg install gsl:x64-windows
+        echo GSL_ROOT=%VCPKG_INSTALLATION_ROOT%/installed/x64-windows>> %GITHUB_ENV%
+    - name: Set up MSVC (Windows)
+      if: runner.os == 'Windows'
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Build (Windows)
+      if: runner.os == 'Windows'
+      shell: cmd
+      run: |
+        cl
+        qmake -v
+        qmake -query
+        set
+        qmake PRESET=win32
+        nmake
+
+    # --- PASO NUEVO: GUARDAR LOS BINARIOS GENERADOS ---
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: AlphaPlot-${{ matrix.os }}-Latest
+        path: |
+          **/*.exe
+          **/*.dll
+          **/*.app
+          **/alphaplot
+          !**/obj/**
+        if-no-files-found: warn
